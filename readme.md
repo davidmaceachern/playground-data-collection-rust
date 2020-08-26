@@ -301,95 +301,164 @@ Remove the parentheses and now upon receiving a status code that isn't `200`
 ``` Bash
 Error: Server responded with: 404 Not Found
 ```
-Great. Next let's look at getting our facts out of the response.
+Great. Next, let's look at getting our facts out of the response.
 
+### Deserializing Data
 
-### TODO Deserializing Data
-### TODO Persisting the data locally
-### TODO Determining the Types
+Let's start by trying to store the body's text as a string.
 
-
-### Missing Features
-
-``` toml
-[dependencies]
-reqwest = { version = "0.10", features = ["blocking", "json"] }
-serde = { version = "1.0.115", features = ["derive"] }
-serde_json = "1.0.57"
-jfs = "0.6.2"
-anyhow = "1.0.32"
+``` diff
++    let string = serde_json::from_str(response.text());
+     Ok(())
 ```
 
+The compiler complains...
 
-### Persisting the data locally
+``` Bash
+error[E0308]: mismatched types
+  --> src/main.rs:10:39
+   |
+10 |     let string = serde_json::from_str(response.text());
+   |                                       ^^^^^^^^^^^^^^^ expected `&str`, found enum `std::result::Result`
+```
+We can try to get the result by telling Rust that we might expect an error on both function calls, allowing us to access the result which hopefully is of type `&str`.
 
-We want the data to be used after our application has finished running. This is useful if the application crashes, or we have another application that will use the data elsewhere.
+``` diff
+-    let string = serde_json::from_str(response.text());
++    let string = serde_json::from_str(response.text()?)?;
+```
 
-- We are writing a new file for each dataset that we collect. 
-- We restrict the number of calls we are writing a single record at a time, so our program is synchronous.
-- We can use a loop to run our program for the prescribed number of times, and we pause the thread's execution so that we don't flood the API with requests. This can be based on whether the API we are calling has a throttling limit.
+``` Bash
+error[E0308]: try expression alternatives have incompatible types
+  --> src/main.rs:10:39
+   |
+10 |     let string = serde_json::from_str(response.text()?);
+   |                                       ^^^^^^^^^^^^^^^^
+   |                                       |
+   |                                       expected `&str`, found struct `std::string::String`
+   |                                       help: consider borrowing here: `&response.text()?`
+```
 
-In the future we can increase the collection frequency then we might want to consider a different storage layer that considers scalability.
+Wow, the compiler tells us what we might be able to do to fix the problem. Ok so if we reference the response instead...
+
+``` Bash
+warning: unused variable: `string`
+  --> src/main.rs:10:9
+   |
+10 |     let string = serde_json::from_str(&response.text()?)?;
+   |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_string`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: 1 warning emitted
+
+    Finished dev [unoptimized + debuginfo] target(s) in 3.20s
+     Running `target/debug/data-collection-rust`
+Error: invalid type: map, expected unit at line 1 column 0
+```
+
+Ok, nice so we only have one warning which we can ignore because we plan to use the variable. The error however might take some figuring out. So it turns out we can coerce Rust to try to parse using a specific type provided by serde_json. This will only work if the item is valid JSON.
+
+``` diff
+-    let string = serde_json::from_str(&response.text()?)?;
++    let string: Value = serde_json::from_str(&response.text()?)?;
+```
+So the code compiles, we can print out what string now holds to check what the response body looks like.
+
+``` diff
++    dbg!(string);
+```
+
+``` bash
+[src/main.rs:12] string = Object({
+    "__v": Number(
+        0,
+    ),
+    "_id": String(
+        "591f97d48dec2e14e3c20aff",
+    ),
+    "createdAt": String(
+        "2018-01-04T01:10:54.673Z",
+    ),
+    "deleted": Bool(
+        false,
+    ),
+    "source": String(
+        "api",
+    ),
+    "status": Object({
+        "sentCount": Number(
+            1,
+        ),
+        "verified": Bool(
+            true,
+        ),
+    }),
+    "text": String(
+        "Cats have the largest eyes of any mammal.",
+    ),
+    "type": String(
+        "cat",
+    ),
+    "updatedAt": String(
+        "2020-08-23T20:20:01.611Z",
+    ),
+    "used": Bool(
+        false,
+    ),
+    "user": String(
+        "5a9ac18c7478810ea6c06381",
+    ),
+})
+```
+
+Awesome, so this looks more like the kind of data we might want to use later. Rust even provides us with what types it thinks the fields are.
 
 ### Determining the types
 
-The serde crate can handle parsing untyped json as long as it is valid. We can do this before assigning a type by using `value`.
+Rust is a strongly typed language so this means we define the types that our application needs to know about, and should do so when we can because the compiler is not always able to infer. It's useful to define the structure of our data for future reference so that when it comes to expanding our application we might need to understand the shape of our data.
 
-For our use case we can use an unsigned integer which we know will never be a negative number.
+Having checked the serde_json documentation we will need to make the following changes:
+1. At the top of the `main.rs`
+    ``` diff
+    -use serde_json::Value;
+    +use serde::{Deserialize, Serialize};
+    ```
+2. Further down the `main.rs`
+    ``` diff
+    -    let string: Value = serde_json::from_str(&response.text()?)?;
+    +    let string: CatFact = serde_json::from_str(&response.text()?)?;
+        Ok(())
+    }
+    +
+    +#[derive(Debug, Serialize, Deserialize)]
+    +struct CatFact {
+    +    used: bool,
+    +    source: String,
+    +    r#type: String,
+    +    deleted: bool,
+    +    _id: String,
+    +    __v: i32,
+    +    text: String,
+    +    updatedAt: String,
+    +    createdAt: String,
+    +    status: Status,
+    +    user: String
+    +}
+    +
+    +#[derive(Debug, Serialize, Deserialize)]
+    +struct Status {
+    +    verified: bool,
+    +    sentCount: i32
+    +}
+    ```
+3. In the `Cargo.toml`:
+    ``` diff
+    -serde = "1.0.115"
+    +serde = { version = "1.0.115", features = ["derive"] }
+    ```
 
-``` Rust
-let mut count = 0u32;
-```
-
-Rust is a strongly typed language so this means we can define the types that our application needs to know about. They will look like the following.
-
-Let's define types anyway to see how this is done, notice that I have chosen to use "animal_type" instead since "type" is a Rust reserved [keyword](https://doc.rust-lang.org/reference/types.html).
-
-``` Rust
-struct CatFact {
-    used: bool,
-    source: String,
-    animal_type: String,
-    deleted: String,
-    _id: String,
-    _v: i32,
-    text: String,
-    updated_at: String,
-    created_at: String,
-    status: Status,
-    user: String
-}
-
-struct Status {
-    verified: bool,
-    sentCount: i32
-}
-```
-
-``` Rust
-Response {
-    url: "https://cat-fact.herokuapp.com/facts/random",
-    status: 200,
-    headers: {
-        "server": "Cowboy",
-        "connection": "keep-alive",
-        "x-powered-by": "Express",
-        "access-control-allow-origin": "*",
-        "content-type": "application/json; charset=utf-8",
-        "content-length": "305",
-        "etag": "W/\"131-4MvaJDAXqtlkSUWatxfF1BCPTek\"",
-        "set-cookie": "connect.sid=s%3Ap0LnvYyEQUN9plmg--3mnx7DNd1dyhI4.Ms1oCBB5sWMAMwCtgfye572bD%2FBfxlCRkRRoq8cLzEY; Path=/; HttpOnly",
-        "date": "Tue, 18 Aug 2020 20:04:01 GMT",
-        "via": "1.1 vegur",
-    },
-}
-```
-
-## Other Issues
-
-### Reserved keywords
-
-When attempting to define the types for a Json record, if the field name (also known as a key) happens to be a reserved keyword then the compiler handily points this out. Thanks Rust!
+Notice that when attempting to define the types for a JSON record, if the field name (also known as a key) happens to be a reserved keyword then the compiler handily points this out. 
 
 ``` Rust
 error: expected identifier, found keyword `type`
@@ -408,9 +477,69 @@ error: aborting due to previous error
 error: could not compile `playground-data-collection-rust`.
 ```
 
+So when we run the application and `dbg!(string)` we see we have a cat fact.
+
+``` Bash
+[src/main.rs:12] string = CatFact {
+    used: false,
+    source: "api",
+    type: "cat",
+    deleted: false,
+    etc...
+```
+Then if we want to access a specific field we use dot notation.
+
+``` diff
++    dbg!(string.text);
+     Ok(())
+```
+
+
+---
+
+
+
+### TODO Persisting the data locally
+
+We want the data to be used after our application has finished running. This is useful if the application crashes, or we have another application that will use the data elsewhere.
+
+- We are writing a new file for each dataset that we collect. 
+- We restrict the number of calls we are writing a single record at a time, so our program is synchronous.
+- We can use a loop to run our program for the prescribed number of times, and we pause the thread's execution so that we don't flood the API with requests. This can be based on whether the API we are calling has a throttling limit.
+
+In the future we can increase the collection frequency then we might want to consider a different storage layer that considers scalability.
+
+## Collecting more than one item
+
+For our use case we can use an unsigned integer which we know will never be a negative numbers
+
+``` Rust
+let mut count = 0u32;
+```
+
+
+``` Rust
+Response {
+    url: "https://cat-fact.herokuapp.com/facts/random",
+    status: 200,
+    header: {
+        "server": "Cowboy",
+        "connection": "keep-alive",
+        "x-powered-by": "Express",
+        "access-control-allow-origin": "*",
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "305",
+        "etag": "W/\"131-4MvaJDAXqtlkSUWatxfF1BCPTek\"",
+        "set-cookie": "connect.sid=s%3Ap0LnvYyEQUN9plmg--3mnx7DNd1dyhI4.Ms1oCBB5sWMAMwCtgfye572bD%2FBfxlCRkRRoq8cLzEY; Path=/; HttpOnly",
+        "date": "Tue, 18 Aug 2020 20:04:01 GMT",
+        "via": "1.1 vegur",
+    },
+}
+```
+
 ### Compiler Warnings
 
-This type of warning doesn't stop the code from compiling, it's a bit like Javascripts ESLint telling us that our code isn't entirely idiomatic. 
+This type of warning doesn't stop the code from compiling, it's a bit like Javascripts ESLint telling us that our code isn't idiomatic. 
 ``` Bash
 warning: structure field `sentCount` should have a snake case name
   --> src/main.rs:49:5
