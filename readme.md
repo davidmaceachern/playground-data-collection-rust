@@ -494,24 +494,67 @@ Then if we want to access a specific field we use dot notation.
      Ok(())
 ```
 
+Now we have the data we can store it somewhere.
 
----
+### Persisting the data locally
 
+If we want the data to be used after our application has finished running, we need to consider using a persistence layer. This is useful if the application crashes, or we have another application that will use the data elsewhere. For the purposes of this exercise let's consider the scope of how we can store data.
 
-
-### TODO Persisting the data locally
-
-We want the data to be used after our application has finished running. This is useful if the application crashes, or we have another application that will use the data elsewhere.
-
-- We are writing a new file for each dataset that we collect. 
+- We can write a new file for each dataset that we collect. 
 - We restrict the number of calls we are writing a single record at a time, so our program is synchronous.
 - We can use a loop to run our program for the prescribed number of times, and we pause the thread's execution so that we don't flood the API with requests. This can be based on whether the API we are calling has a throttling limit.
 
 In the future we can increase the collection frequency then we might want to consider a different storage layer that considers scalability.
 
-## Collecting more than one item
+We have chosen to use `jfs` which will use our filesystem to store the data. If we wanted to analyze our data straight away we could have considered `sqlite`.
 
-For our use case we can use an unsigned integer which we know will never be a negative numbers
+Ok so let's add the ability to save our data structure.
+
+Start by importing:
+
+``` diff
+ use anyhow::anyhow;
++use jfs::Store;
+```
+And we can print out the key that it uses as the file name.
+``` diff
++    let d: Store = Store::new("data")?;
++    let key = db.save(&string)?;
++    dbg!(key);
+     Ok(())
+```
+Let's add some logging capability so that we can let our application log the result of what it's doing.
+``` Bash
+$ cargo add env_log
+```
+And adding the following in the `main.rs`.
+
+``` diff
+ use jfs::Store;
++#[macro_use]
++extern crate log;
+...
++    env_logger::init();
++    info!("Starting up");
+....
+-    dbg!(key);
++    info!("Written one file with key: {}", key);
+```
+When we run our application with an environment variable.
+``` Bash
+RUST_LOG=info cargo run
+```
+It will now print out some details for us.
+``` Log
+[2020-08-27T17:54:41Z INFO  data_collection_rust] Starting up
+[2020-08-27T17:54:42Z INFO  data_collection_rust] Written one file with key: 032bfc7b-f1c8-4cdd-bb9a-f29b3f1fa9c4
+```
+
+Great, but what if we want to keep collecting items, can we make the application do this?
+
+### Collecting more than one item
+
+For our use case, we can use an unsigned integer since we know we will never have a negative number when incrementing a counter.
 
 ``` Rust
 let mut count = 0u32;
