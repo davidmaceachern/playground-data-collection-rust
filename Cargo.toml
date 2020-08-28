@@ -1,0 +1,16 @@
+[package]
+name = "data-collection-rust"
+version = "0.1.0"
+authors = ["David MacEachern <david.maceachern.tech@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.10", features = ["blocking"] }
+serde = { version = "1.0.115", features = ["derive"] }
+serde_json = "1.0.57"
+jfs = "0.6.2"
+anyhow = "1.0.32"
+log = "0.4.0"
+env_logger = "0.7.1"

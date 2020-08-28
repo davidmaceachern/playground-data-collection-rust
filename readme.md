@@ -498,7 +498,7 @@ Now we have the data we can store it somewhere.
 
 ### Persisting the data locally
 
-If we want the data to be used after our application has finished running, we need to consider using a persistence layer. This is useful if the application crashes, or we have another application that will use the data elsewhere. For the purposes of this exercise let's consider the scope of how we can store data.
+If we want the data to be used after our application has finished running, we need to consider using a persistence layer. This is useful if the application crashes, or we have another application that will use the data elsewhere. For this exercise let's consider the scope of how we can store data.
 
 - We can write a new file for each dataset that we collect. 
 - We restrict the number of calls we are writing a single record at a time, so our program is synchronous.
@@ -554,12 +554,124 @@ Great, but what if we want to keep collecting items, can we make the application
 
 ### Collecting more than one item
 
-For our use case, we can use an unsigned integer since we know we will never have a negative number when incrementing a counter.
+So now to collect more than one item.
 
-``` Rust
-let mut count = 0u32;
+We can add a loop that will run infinitely. You will notice that I have moved items out of the loop as it should be more efficient to only run them once at start-up.
+
+``` diff
+fn main() -> Result<(), anyhow::Error> {
+     info!("Starting up");
+     let client = reqwest::blocking::Client::new();
+     let uri = "https://cat-fact.herokuapp.com/facts/random";
+-    let response = client.get(uri).send()?;
+-    if response.status().is_client_error() || response.status().is_server_error() {
+-        return Err(anyhow!("Server responded with: {}", response.status()));
+-    }
+-    let string: CatFact = serde_json::from_str(&response.text()?)?;
+     let db: Store = Store::new("data")?;
+-    let key = db.save(&string)?;
+-    info!("Written one file with key: {}", key);
++    loop {
++        let response = client.get(uri).send()?;
++        if response.status().is_client_error() || response.status().is_server_error() {
++            return Err(anyhow!("Server responded with: {}", response.status()));
++        }
++        let string: CatFact = serde_json::from_str(&response.text()?)?;
++        let key = db.save(&string)?;
++        info!("Written one file with key: {}", key);
++    }
+     Ok(())
+ }
 ```
 
+Great but we can probably slow down our requests so we don't DDOS or throttle the service we're using.
+
+``` log
+[2020-08-28T13:17:57Z INFO  data_collection_rust] Starting up
+[2020-08-28T13:18:04Z INFO  data_collection_rust] Written one file with key: 6ec26b1e-51e9-46d7-92fc-5b5d848f3b85
+[2020-08-28T13:18:04Z INFO  data_collection_rust] Written one file with key: e731bec5-ef6e-4f64-93c9-abd2df4d837b
+[2020-08-28T13:18:05Z INFO  data_collection_rust] Written one file with key: fecd2a8b-2f3c-4f3b-a15e-f87f577a1116
+[2020-08-28T13:18:05Z INFO  data_collection_rust] Written one file with key: b2220b56-ed18-4a60-a79a-b096f308cfae
+[2020-08-28T13:18:05Z INFO  data_collection_rust] Written one file with key: c38acf34-edee-4e24-938f-2bf3f6b08e7d
+[2020-08-28T13:18:05Z INFO  data_collection_rust] Written one file with key: 1e0f9ca5-d2fe-44a0-801b-869bee21233c
+```
+
+We can do this be making the thread this process run in sleep for some time. So let's import this functionality.
+
+``` diff
+ use serde::{Deserialize, Serialize};
++use std::thread;
++use std::time::Duration;
+```
+And add this to call the method.
+
+``` diff
+         info!("Written one file with key: {}", key);
++        thread::sleep(Duration::from_millis(5000));
+```
+Then when we run our application.
+
+``` bash
+[2020-08-28T13:24:08Z INFO  data_collection_rust] Starting up
+[2020-08-28T13:24:08Z INFO  data_collection_rust] Written one file with key: 30183e77-c25c-453c-922b-e027ba9a0e54
+[2020-08-28T13:24:14Z INFO  data_collection_rust] Written one file with key: f1b63d41-8452-442f-8e3d-c4fea7bf80d0
+```
+Great, you can see the time difference between the two requests is greater now, we could set this duration as an environment variable if we wanted later. 
+
+``` bash
+warning: unreachable expression
+  --> src/main.rs:26:5
+   |
+16 | /     loop {
+17 | |         let response = client.get(uri).send()?;
+18 | |         if response.status().is_client_error() || response.status().is_server_error() {
+19 | |             return Err(anyhow!("Server responded with: {}", response.status()));
+...  |
+24 | |         thread::sleep(Duration::from_millis(5000));
+25 | |     }
+   | |_____- any code following this expression is unreachable
+26 |       Ok(())
+   |       ^^^^^^ unreachable expression
+   |
+   = note: `#[warn(unreachable_code)]` on by default
+```
+
+The compiler is warning us that our function is never going to return `OK` because it never leaves the loop. We can add a counter and break condition to resolve this.
+
+For our use case, we can use an unsigned integer since we know we will never have a negative number when incrementing our counter. We also make it mutable because we want to change it.
+
+``` diff
+     info!("Starting up");
++    let mut count = 0u32;
+```
+``` diff
+loop {
++    count += 1;
+```
+And add the break condition.
+
+``` diff
+         thread::sleep(Duration::from_millis(5000));
++        if count == 5 {
++            break;
++        } else {
++            continue;
++        }
+```
+
+
+## Future work
+
+Some things that we could do next:
+- Add a test that will mock calling the API.
+- Create a data factory for generating random test data.
+- Use a storage layer such as Amazon S3 to enable scaling.
+
+Thanks for reading, I hope this helped you, please reach out to me on Twitter if you have any questions and/or suggestions!
+
+## Misc
+
+### Response
 
 ``` Rust
 Response {
@@ -596,12 +708,3 @@ warning: 3 warnings emitted
 This can be disabled whilst developing if the noise gets in the way with the following at the top of the file.
 
 `#![allow(non_snake_case)]`
-
-## Future work
-
-Some things that we could do next:
-- Add a test that will mock calling the API.
-- Create a data factory for generating random test data.
-- Use a storage layer such as Amazon S3 to enable scaling.
-
-Thanks for reading, I hope this helped you, please reach out to me on Twitter if you have any questions!
