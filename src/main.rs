@@ -35,8 +35,8 @@ fn main() -> Result<(), anyhow::Error> {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CatFact {
-    used: bool,
-    source: String,
+//    used: bool,
+//    source: String,
     r#type: String,
     deleted: bool,
     _id: String,
@@ -50,6 +50,6 @@ struct CatFact {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Status {
-    verified: bool,
+    verified: Option<bool>,
     sentCount: i32
 }
